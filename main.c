@@ -8,10 +8,8 @@
 #define REALLOC(ptr, sz) realloc(ptr, sz)
 #define DEALLOC(ptr) free(ptr)
 
-typedef struct {
-  const char *key;
-  const char *value;
-} KV;
+#define BUCKET_INIT 0x10
+#define DICT_INIT 0x100
 
 void cstring_copy(const char *src, char *dst) {
   for (; *src != '\0'; ++src, ++dst) {
@@ -33,8 +31,13 @@ int cstring_eq(const char *s1, const char *s2) {
   return *s1 == '\0' && *s2 == '\0';
 }
 
+typedef struct {
+  const char *key;
+  const char *value;
+} KV;
+
 KV kv_init(const char *key, const char *value) {
-  KV kv;
+  KV kv = {0};
   size_t key_sz = cstring_sz(key);
   size_t value_sz = cstring_sz(value);
   char *mem = (char *)ALLOC(key_sz + value_sz);
@@ -94,12 +97,12 @@ typedef struct {
   size_t  len;
 } Dict;
 
-Dict dict_init(size_t len) {
+Dict dict_init() {
   Dict d = {0};
-  Bucket *mem = (Bucket *)ALLOC(len * sizeof(Bucket));
+  Bucket *mem = (Bucket *)ALLOC(DICT_INIT * sizeof(Bucket));
   ASSERT(mem && "alloc failed");
   d.buckets = mem;
-  d.len = len;
+  d.len = DICT_INIT;
   return d;
 }
 
@@ -116,22 +119,29 @@ void dict_deinit(Dict *d) {
   d->len = 0;
 }
 
-size_t only_for_testing_hash_fn(const char *key) {
-  return cstring_sz(key);
+// djb2 - http://www.cse.yorku.ca/~oz/hash.html
+size_t hash_fn(const char *key) {
+  size_t hash = 5381;
+  int c;
+  while ((c = *key++)) {
+    hash = ((hash << 5) + hash) + c;
+  }
+  return hash;
 }
 
 int dict_add(Dict *d, const char *key, const char *value) {
-  size_t idx = only_for_testing_hash_fn(key);
-  if (idx >= d->len) {
-    size_t new_len = idx * 2; // only for testing
+  size_t idx = hash_fn(key) % d->len;
+  // resizing: todo
+  /*if (should_resize) {
+    size_t new_len = dict_new_len(d);
     Bucket *mem = (Bucket *)REALLOC(d->buckets, new_len * sizeof(Bucket));
     ASSERT(mem && "realloc failed");
     d->buckets = mem;
     d->len = new_len;
-  }
+  }*/
   Bucket *b = d->buckets + idx;
   if (b->cap == 0) {
-    *b = bucket_init(3); // only for testing
+    *b = bucket_init(BUCKET_INIT);
   }
   for (size_t i = 0; i < b->sz; ++i) {
     if (cstring_eq(key, b->kvs[i].key)) return 1;
@@ -140,23 +150,23 @@ int dict_add(Dict *d, const char *key, const char *value) {
   return 0;
 }
 
-int dict_contains_key(Dict *d, const char *key) {
+const char *dict_get(Dict *d, const char *key) {
   ASSERT(d && d->len > 0 && d->buckets && "dict must be initialized");
-  size_t idx = only_for_testing_hash_fn(key);
-  if (idx >= d->len) return 0;
+  size_t idx = hash_fn(key) % d->len;
   Bucket *b = d->buckets + idx;
-  if (b->cap == 0) return 0;
+  if (b->cap == 0) return NULL;
   for (size_t i = 0; i < b->sz; ++i) {
-    if (cstring_eq(key, b->kvs[i].key)) return 1;
+    KV kv = b->kvs[i];
+    if (cstring_eq(key, kv.key)) return kv.value;
   }
-  return 0;
+  return NULL;
 }
 
 int main() {
-  Dict d = dict_init(1);
+  Dict d = dict_init();
   dict_add(&d, "abc", "123");
-  ASSERT(dict_contains_key(&d, "abc"));
-  ASSERT(!dict_contains_key(&d, "def"));
+  ASSERT(dict_get(&d, "abc"));
+  ASSERT(!dict_get(&d, "def"));
   dict_deinit(&d);
   return 0;
 }
